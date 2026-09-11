@@ -707,11 +707,22 @@ function tabEkstreOkul(){
 }
 
 // ---- Mesaj (admin: whatsapp / telegram send) ----
-function tabMesaj(){
+function buildOrderMessage(){
   const date = tomorrowStr();
-  const total = db.schools.reduce((a,s)=>a+getOrderQty(date,s),0);
-  const totalMoney = db.schools.reduce((a,s)=>a+getOrderQty(date,s)*product(s).price,0);
-  const text = `Okul Ekmek Siparişi — ${fmtDate(date)}\n` + db.schools.map(s=>`${s.name}: ${getOrderQty(date,s)} adet (${product(s).name})`).join('\n') + `\nToplam: ${total} adet — ${tl(totalMoney)}`;
+  const byProduct = {};
+  db.schools.forEach(s=>{
+    const p = product(s);
+    const qty = getOrderQty(date, s);
+    if(!byProduct[p.id]) byProduct[p.id] = {name:p.name, qty:0, money:0};
+    byProduct[p.id].qty += qty;
+    byProduct[p.id].money += qty * p.price;
+  });
+  const productLines = Object.values(byProduct).map(p=>`${p.name}: ${p.qty} adet — ${tl(p.money)}`).join('\n');
+  const schoolLines = db.schools.map(s=>`${s.name}: ${getOrderQty(date,s)} adet (${product(s).name})`).join('\n');
+  return `Okul Ekmek Siparişi — ${fmtDate(date)}\n\n${schoolLines}\n\nÜrün bazında toplam:\n${productLines}`;
+}
+function tabMesaj(){
+  const text = buildOrderMessage();
   const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
   const tgReady = db.telegram && db.telegram.token && db.telegram.chatId;
   return `
@@ -720,7 +731,7 @@ function tabMesaj(){
     <div class="school-meta" style="white-space:pre-line;line-height:1.6;">${text}</div>
   </div>
   <div class="card" style="display:flex;flex-direction:column;gap:10px;">
-    <a class="msg-btn wa" href="${waLink}" target="_blank">📲 WhatsApp'tan gönder</a>
+    <a class="msg-btn wa" href="${waLink}">📲 WhatsApp'tan gönder</a>
     <button class="msg-btn tg" id="tgBtn" ${tgReady?'':'disabled style="opacity:.5;"'}>✈️ Telegram'a gönder</button>
     ${tgReady ? '' : `<div class="school-meta">Telegram göndermek için Ayarlar sekmesinden bot token ve chat ID gir.</div>`}
   </div>
@@ -732,10 +743,7 @@ function attachTabMesaj(){
   const tg = document.getElementById('tgBtn');
   if(tg) tg.onclick = async ()=>{
     if(!db.telegram || !db.telegram.token || !db.telegram.chatId) return;
-    const date = tomorrowStr();
-    const total = db.schools.reduce((a,s)=>a+getOrderQty(date,s),0);
-    const totalMoney = db.schools.reduce((a,s)=>a+getOrderQty(date,s)*product(s).price,0);
-    const text = `Okul Ekmek Siparişi — ${fmtDate(date)}\n` + db.schools.map(s=>`${s.name}: ${getOrderQty(date,s)} adet (${product(s).name})`).join('\n') + `\nToplam: ${total} adet — ${tl(totalMoney)}`;
+    const text = buildOrderMessage();
     tg.disabled = true; tg.textContent = 'Gönderiliyor...';
     try{
       const url = `https://api.telegram.org/bot${db.telegram.token}/sendMessage?chat_id=${encodeURIComponent(db.telegram.chatId)}&text=${encodeURIComponent(text)}`;

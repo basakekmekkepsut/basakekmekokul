@@ -264,6 +264,9 @@ function tomorrowStr(){
   const d = new Date(); d.setDate(d.getDate()+1);
   return d.toISOString().slice(0,10);
 }
+function todayStr(){
+  return new Date().toISOString().slice(0,10);
+}
 function fmtDate(s){
   const d = new Date(s+'T00:00:00');
   return d.toLocaleDateString('tr-TR',{day:'2-digit',month:'long',weekday:'long'});
@@ -308,6 +311,16 @@ function monthTotal(schoolId){
 function paid(schoolKey){
   const log = db.payments[schoolKey] || [];
   return log.reduce((a,p)=>a+p.amount,0);
+}
+function addPayment(key, amount, note){
+  if(!db.payments[key]) db.payments[key] = [];
+  db.payments[key].push({date: todayStr(), amount, note: note||''});
+  saveDB(db);
+}
+function removePayment(key, index){
+  if(!db.payments[key]) return;
+  db.payments[key].splice(index, 1);
+  saveDB(db);
 }
 function product(school){ return db.products.find(p=>p.id===school.productId) || db.products[0]; }
 function tl(n){ return n.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ₺'; }
@@ -439,7 +452,8 @@ const ICONS = {
   ekstre: '<path d="M6 3h12v18l-2.5-1.5L13 21l-2-1.5L9 21l-2.5-1.5L4.5 21V5"/><path d="M8 8h8M8 12h8M8 16h5" transform="translate(-2,0)"/>',
   mesaj: '<path d="M4 5h16v11H8l-4 4V5Z"/><path d="M8 9h8M8 12h5"/>',
   uretim: '<path d="M4 3v18M4 3l12 6-12 6"/><path d="M16 3v18"/>',
-  ayarlar: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9h0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>'
+  ayarlar: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9h0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  firmalar: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/>'
 };
 function icon(name){ return `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
 
@@ -448,7 +462,7 @@ function appShell(){
   const role = session.role;
   let tabs;
   if(role==='admin'){
-    tabs = [['siparis','siparis','Sipariş'],['okullar','okullar','Okullar'],['urunler','urunler','Ürünler'],['ekstre','ekstre','Ekstre'],['mesaj','mesaj','Mesaj'],['ayarlar','ayarlar','Ayarlar']];
+    tabs = [['siparis','siparis','Sipariş'],['okullar','okullar','Okullar'],['urunler','urunler','Ürünler'],['ekstre','ekstre','Ekstre'],['firmalar','firmalar','Firmalar'],['mesaj','mesaj','Mesaj'],['ayarlar','ayarlar','Ayarlar']];
   } else if(role==='personel'){
     const p = db.personel.find(x=>x.username===session.key);
     const perms = (p && p.perms) || {};
@@ -489,6 +503,7 @@ function renderTab(){
     else if(session.tab==='okullar') el.innerHTML = tabOkullar();
     else if(session.tab==='urunler') el.innerHTML = tabUrunler();
     else if(session.tab==='ekstre') el.innerHTML = tabEkstreAdmin();
+    else if(session.tab==='firmalar') el.innerHTML = tabFirmalar();
     else if(session.tab==='mesaj') el.innerHTML = tabMesaj();
     else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
   } else if(session.role==='personel'){
@@ -497,6 +512,7 @@ function renderTab(){
     else if(session.tab==='okullar') el.innerHTML = tabOkullar();
     else if(session.tab==='urunler') el.innerHTML = tabUrunler();
     else if(session.tab==='ekstre') el.innerHTML = tabEkstreAdmin();
+    else if(session.tab==='firmalar') el.innerHTML = tabFirmalar();
     else if(session.tab==='mesaj') el.innerHTML = tabMesaj();
     else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
   } else if(session.role==='firma'){
@@ -681,16 +697,19 @@ function attachTabUrunler(){
 
 // ---- Ekstre (admin — all) ----
 function tabEkstreAdmin(){
-  const firmaSchools = db.schools.filter(s=>s.firma);
   const directSchools = db.schools.filter(s=>!s.firma);
-  let html = `<div class="firma-block"><div class="firma-title">YENİÇERİ (firma toplu hesap)</div><div class="card">`;
-  let firmaTotal = 0, firmaMoney = 0;
-  firmaSchools.forEach(s=>{
-    const t = monthTotal(s.id); const m = monthMoney(s.id); firmaTotal += t; firmaMoney += m;
-    html += `<div class="school-row"><div class="row"><div class="school-name">${s.name}</div><div class="school-meta">${t} adet · ${tl(m)}</div></div></div>`;
+  let html = '';
+  Object.keys(db.firmalar).forEach(f=>{
+    const schools = db.schools.filter(s=>s.firma===f);
+    let firmaMoney = 0;
+    html += `<div class="firma-block"><div class="firma-title">${f} (firma toplu hesap)</div><div class="card">`;
+    schools.forEach(s=>{
+      const t = monthTotal(s.id); const m = monthMoney(s.id); firmaMoney += m;
+      html += `<div class="school-row"><div class="row"><div class="school-name">${s.name}</div><div class="school-meta">${t} adet · ${tl(m)}</div></div></div>`;
+    });
+    const firmaPaid = paid(f);
+    html += `</div><div class="totalbar"><div>${f} toplam bakiye</div><div class="num">${tl(firmaMoney - firmaPaid)}</div></div></div>`;
   });
-  const firmaPaid = paid('YENİÇERİ');
-  html += `</div><div class="totalbar"><div>Firma toplam bakiye</div><div class="num">${tl(firmaMoney - firmaPaid)}</div></div></div>`;
 
   html += `<div class="firma-block"><div class="firma-title">Direkt verilen okullar</div><div class="card">`;
   directSchools.forEach(s=>{
@@ -700,6 +719,70 @@ function tabEkstreAdmin(){
   });
   html += `</div></div>`;
   return html;
+}
+
+// ---- Firmalar (admin: enter/track payments against firma & direct-school balances) ----
+function tabFirmalar(){
+  let html = '';
+  Object.keys(db.firmalar).forEach(f=>{
+    const schools = db.schools.filter(s=>s.firma===f);
+    const money = schools.reduce((a,s)=>a+monthMoney(s.id),0);
+    const p = paid(f);
+    const log = db.payments[f] || [];
+    html += `<div class="firma-block"><div class="firma-title">${f}</div><div class="card">
+      <div class="totalbar" style="margin-bottom:0;"><div>Bakiye</div><div class="num">${tl(money-p)}</div></div>
+      <div class="school-meta" style="margin:10px 0 6px;">Bu ay borç: ${tl(money)} · Ödenen: ${tl(p)}</div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <input type="number" step="0.01" placeholder="Ödeme tutarı (₺)" data-payamt="${f}" style="margin-top:0;">
+        <button class="ghost" data-addpay="${f}">Ödeme gir</button>
+      </div>
+      ${log.length ? log.map((entry,i)=>`<div class="school-row"><div class="row">
+          <div class="school-meta">${entry.date} — ${tl(entry.amount)}${entry.note?' · '+entry.note:''}</div>
+          <button class="iconbtn" style="color:var(--danger);" data-delpay="${f}" data-payidx="${i}">✕</button>
+        </div></div>`).join('') : `<div class="school-meta">Henüz ödeme girilmemiş.</div>`}
+    </div></div>`;
+  });
+
+  const directSchools = db.schools.filter(s=>!s.firma);
+  html += `<div class="firma-block"><div class="firma-title">Direkt verilen okullar</div>`;
+  directSchools.forEach(s=>{
+    const money = monthMoney(s.id);
+    const p = paid(s.id);
+    const log = db.payments[s.id] || [];
+    html += `<div class="card" style="margin-bottom:10px;">
+      <div class="row"><div class="school-name">${s.name}</div><div style="font-family:'Bitter',serif;font-weight:700;">${tl(money-p)}</div></div>
+      <div class="school-meta" style="margin:6px 0 8px;">Bu ay borç: ${tl(money)} · Ödenen: ${tl(p)}</div>
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <input type="number" step="0.01" placeholder="Ödeme tutarı (₺)" data-payamt="${s.id}" style="margin-top:0;">
+        <button class="ghost" data-addpay="${s.id}">Ödeme gir</button>
+      </div>
+      ${log.length ? log.map((entry,i)=>`<div class="school-row"><div class="row">
+          <div class="school-meta">${entry.date} — ${tl(entry.amount)}${entry.note?' · '+entry.note:''}</div>
+          <button class="iconbtn" style="color:var(--danger);" data-delpay="${s.id}" data-payidx="${i}">✕</button>
+        </div></div>`).join('') : `<div class="school-meta">Henüz ödeme girilmemiş.</div>`}
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
+}
+function attachTabFirmalar(){
+  document.querySelectorAll('[data-addpay]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const key = btn.dataset.addpay;
+      const inp = document.querySelector(`[data-payamt="${key}"]`);
+      const val = parseFloat(inp.value);
+      if(!val || val<=0){ alert('Geçerli bir tutar gir.'); return; }
+      addPayment(key, val);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-delpay]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!confirm('Bu ödeme kaydını silmek istediğine emin misin?')) return;
+      removePayment(btn.dataset.delpay, parseInt(btn.dataset.payidx));
+      render();
+    };
+  });
 }
 
 function tabEkstreFirma(){
@@ -738,7 +821,6 @@ function buildOrderMessage(){
 }
 function tabMesaj(){
   const text = buildOrderMessage();
-  const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
   const tgReady = db.telegram && db.telegram.token && db.telegram.chatId;
   return `
   <div class="card">
@@ -746,7 +828,7 @@ function tabMesaj(){
     <div class="school-meta" style="white-space:pre-line;line-height:1.6;">${text}</div>
   </div>
   <div class="card" style="display:flex;flex-direction:column;gap:10px;">
-    <a class="msg-btn wa" href="${waLink}">📲 WhatsApp'tan gönder</a>
+    <button class="msg-btn wa" id="waBtn">📲 WhatsApp'tan gönder</button>
     <button class="msg-btn tg" id="tgBtn" ${tgReady?'':'disabled style="opacity:.5;"'}>✈️ Telegram'a gönder</button>
     ${tgReady ? '' : `<div class="school-meta">Telegram göndermek için Ayarlar sekmesinden bot token ve chat ID gir.</div>`}
   </div>
@@ -755,6 +837,12 @@ function tabMesaj(){
   </div>`;
 }
 function attachTabMesaj(){
+  const wa = document.getElementById('waBtn');
+  if(wa) wa.onclick = ()=>{
+    const text = buildOrderMessage();
+    const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.location.href = waLink;
+  };
   const tg = document.getElementById('tgBtn');
   if(tg) tg.onclick = async ()=>{
     if(!db.telegram || !db.telegram.token || !db.telegram.chatId) return;
@@ -967,7 +1055,7 @@ function attachTabAyarlar(){
 }
 
 function attachTab(){
-  attachTabSiparis(); attachTabOkullar(); attachTabUrunler(); attachTabMesaj(); attachTabAyarlar();
+  attachTabSiparis(); attachTabOkullar(); attachTabUrunler(); attachTabFirmalar(); attachTabMesaj(); attachTabAyarlar();
 }
 
 // ---------- init ----------

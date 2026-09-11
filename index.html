@@ -146,7 +146,7 @@ nav.tabs .ic{width:20px; height:20px; margin-bottom:1px;}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -173,18 +173,18 @@ function defaultDB(){
       {id:'ekmek', name:'Ekmek', price:3},
     ],
     schools: [
-      {id:'cumhuriyet', name:'Cumhuriyet', firma:'YENİÇERİ', qty:20, productId:'roll', portal:null},
-      {id:'hacerozer', name:'Hacer Özer', firma:'YENİÇERİ', qty:18, productId:'roll', portal:null},
-      {id:'isaalan', name:'İsaalan', firma:'YENİÇERİ', qty:15, productId:'roll', portal:null},
-      {id:'kecidere', name:'Keçidere', firma:'YENİÇERİ', qty:12, productId:'roll', portal:null},
-      {id:'imamhatip', name:'İmam Hatip', firma:'YENİÇERİ', qty:25, productId:'roll', portal:null},
-      {id:'mahmudiye', name:'Mahmudiye', firma:'YENİÇERİ', qty:14, productId:'roll', portal:null},
-      {id:'oktaykocman', name:'Oktay Koçman', firma:'YENİÇERİ', qty:16, productId:'roll', portal:null},
-      {id:'yibo', name:'YİBO', firma:'YENİÇERİ', qty:30, productId:'roll', portal:null},
-      {id:'anadolu', name:'Anadolu', firma:'YENİÇERİ', qty:22, productId:'roll', portal:null},
-      {id:'yiboyatili', name:'YİBO Yatılı', firma:null, qty:40, productId:'ekmek', portal:'1234'},
-      {id:'yibokantin', name:'YİBO Kantin', firma:null, qty:10, productId:'ekmek', portal:'1234'},
-      {id:'cpl', name:'ÇPL', firma:null, qty:12, productId:'ekmek', portal:'1234'},
+      {id:'cumhuriyet', name:'Cumhuriyet', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'hacerozer', name:'Hacer Özer', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'isaalan', name:'İsaalan', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'kecidere', name:'Keçidere', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'imamhatip', name:'İmam Hatip', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'mahmudiye', name:'Mahmudiye', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'oktaykocman', name:'Oktay Koçman', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'yibo', name:'YİBO', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'anadolu', name:'Anadolu', firma:'YENİÇERİ', qty:0, productId:'roll', portal:null},
+      {id:'yiboyatili', name:'YİBO Yatılı', firma:null, qty:0, productId:'ekmek', portal:'1234'},
+      {id:'yibokantin', name:'YİBO Kantin', firma:null, qty:0, productId:'ekmek', portal:'1234'},
+      {id:'cpl', name:'ÇPL', firma:null, qty:0, productId:'ekmek', portal:'1234'},
     ],
     firmalar: { 'YENİÇERİ': { password: '1234' } },
     adminPassword: 'admin123',
@@ -212,23 +212,56 @@ function migrate(raw){
     if(!p.perms) p.perms = {};
     return p;
   });
+  // give older payment records a stable id so deleting one is unambiguous
+  Object.keys(merged.payments || {}).forEach(k=>{
+    merged.payments[k] = (merged.payments[k]||[]).map((entry,i)=>{
+      if(!entry.id) entry.id = 'pay_' + k + '_' + i + '_' + (entry.date||'');
+      return entry;
+    });
+  });
   return merged;
 }
 let db = null;
 let dbReady = false;
-let saveTimer = null;
-function saveDB(next){
-  db = next;
-  try{ localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(db)); }catch(e){}
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(()=>{
-    setDoc(STATE_DOC, { json: JSON.stringify(db) }).catch(e=>{
-      console.error('Firestore save failed', e);
-    });
-  }, 250);
-  if(dbReady) render();
+let pendingWrites = 0;
+
+// Device-local preferences (dark mode, font size) are NOT shared between
+// devices - they live in localStorage only, so one phone's display settings
+// can never overwrite another's data.
+const PREFS_KEY = 'okulEkmekPrefs';
+function loadPrefs(){
+  try{ return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; }catch(e){ return {}; }
 }
-let applyingRemote = false;
+function savePrefs(p){
+  try{ localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }catch(e){}
+}
+let prefs = Object.assign({fontSize:'medium', dark:false}, loadPrefs());
+
+// Every change goes through a transaction: read the newest server copy,
+// apply ONLY this change on top of it, write back. This is what stops two
+// devices from wiping each other's work.
+async function mutate(applyChange){
+  if(applyChange(db) === false) return;  // apply locally for instant feedback
+  try{ localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(db)); }catch(e){}
+  if(dbReady) render();
+
+  pendingWrites++;
+  try{
+    await runTransaction(firestore, async (tx)=>{
+      const snap = await tx.get(STATE_DOC);
+      const current = (snap.exists() && snap.data().json)
+        ? migrate(JSON.parse(snap.data().json))
+        : defaultDB();
+      applyChange(current);
+      tx.set(STATE_DOC, { json: JSON.stringify(current) });
+    });
+  }catch(e){
+    console.error('Kaydedilemedi', e);
+    alert('Değişiklik kaydedilemedi, internet bağlantını kontrol edip tekrar dene.');
+  }finally{
+    pendingWrites--;
+  }
+}
 function bootStorage(){
   // show cached data instantly (if any) while we connect
   try{
@@ -241,12 +274,13 @@ function bootStorage(){
   });
   onSnapshot(STATE_DOC, snap=>{
     if(snap.exists() && snap.data().json){
-      applyingRemote = true;
       db = migrate(JSON.parse(snap.data().json));
       try{ localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(db)); }catch(e){}
       dbReady = true;
-      applyingRemote = false;
-      render();
+      // don't yank the screen out from under someone mid-edit
+      const active = document.activeElement;
+      const typing = active && (active.tagName === 'INPUT' || active.tagName === 'SELECT');
+      if(!typing && pendingWrites === 0) render();
     } else if(!db){
       // first run: seed Firestore with the starting data set
       db = defaultDB();
@@ -277,25 +311,21 @@ function getOrderQty(dateStr, school){
   return school.qty;
 }
 function setOrderQty(dateStr, schoolId, qty){
-  if(!db.orders[dateStr]) db.orders[dateStr] = {};
-  db.orders[dateStr][schoolId] = qty;
-  saveDB(db);
-}
-function persistOnly(){
-  try{ localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(db)); }catch(e){}
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(()=>{
-    setDoc(STATE_DOC, { json: JSON.stringify(db) }).catch(e=>console.error('Firestore save failed', e));
-  }, 250);
+  mutate(d=>{
+    if(!d.orders[dateStr]) d.orders[dateStr] = {};
+    d.orders[dateStr][schoolId] = qty;
+  });
 }
 function ensureOrderDate(dateStr){
   // when a date is first opened for entry, lock in every school's default qty
   // so ekstre/statement totals reflect what was actually confirmed, not guesses
   if(db.orders[dateStr]) return;
-  const entry = {};
-  db.schools.forEach(s=>{ entry[s.id] = s.qty; });
-  db.orders[dateStr] = entry;
-  persistOnly();
+  mutate(d=>{
+    if(d.orders[dateStr]) return false;   // another device already created it
+    const entry = {};
+    d.schools.forEach(s=>{ entry[s.id] = s.qty; });
+    d.orders[dateStr] = entry;
+  });
 }
 function monthTotal(schoolId){
   // sum actual order entries this calendar month for this school (no fake/demo extrapolation)
@@ -313,14 +343,18 @@ function paid(schoolKey){
   return log.reduce((a,p)=>a+p.amount,0);
 }
 function addPayment(key, amount, note){
-  if(!db.payments[key]) db.payments[key] = [];
-  db.payments[key].push({date: todayStr(), amount, note: note||''});
-  saveDB(db);
+  const entry = {date: todayStr(), amount, note: note||'', id: Date.now().toString(36)+Math.random().toString(36).slice(2,6)};
+  mutate(d=>{
+    if(!d.payments[key]) d.payments[key] = [];
+    if(d.payments[key].some(p=>p.id===entry.id)) return false;
+    d.payments[key].push(Object.assign({}, entry));
+  });
 }
-function removePayment(key, index){
-  if(!db.payments[key]) return;
-  db.payments[key].splice(index, 1);
-  saveDB(db);
+function removePayment(key, paymentId){
+  mutate(d=>{
+    if(!d.payments[key]) return false;
+    d.payments[key] = d.payments[key].filter(p=>p.id !== paymentId);
+  });
 }
 function product(school){ return db.products.find(p=>p.id===school.productId) || db.products[0]; }
 function tl(n){ return n.toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ₺'; }
@@ -336,8 +370,8 @@ let session = null; // {role:'staff'|'firma'|'school'|'public', key}
 const root = document.getElementById('root');
 function applyPrefs(){
   if(!db) return;
-  document.body.classList.toggle('dark', db.dark);
-  document.documentElement.style.setProperty('--font-size', db.fontSize==='small'?'14px':db.fontSize==='large'?'18px':'16px');
+  document.body.classList.toggle('dark', prefs.dark);
+  document.documentElement.style.setProperty('--font-size', prefs.fontSize==='small'?'14px':prefs.fontSize==='large'?'18px':'16px');
 }
 
 function render(){
@@ -584,7 +618,11 @@ function tabOkullar(){
       <select class="mini-select" data-prodsid="${s.id}">${prodOpts}</select>
       <input class="qty-input" type="number" data-defsid="${s.id}" value="${s.qty}">
     </div>`).join('') + `</div>
-    <div class="card"><div class="school-meta">Sabit miktar/ürün değişikliği yarından itibaren geçerli olur.</div></div>
+    <div class="card">
+      <button class="primary" id="saveSchoolsBtn">Kaydet</button>
+      <div class="school-meta" style="margin-top:8px;">Miktar/ürün değişiklikleri Kaydet'e basınca işlenir. Yarından itibaren geçerli olur.</div>
+      <button class="ghost" id="zeroSchoolsBtn" style="margin-top:10px;">Tüm sabit miktarları sıfırla</button>
+    </div>
     <div class="card">
       <div class="school-meta" style="margin-bottom:8px;">Yeni okul ekle</div>
       <div class="field"><label>Okul adı</label><input id="newSchoolName" placeholder="Ör. Fatih İlkokulu"></div>
@@ -596,32 +634,49 @@ function tabOkullar(){
         </select>
       </div>
       <div class="field"><label>Ürün</label><select id="newSchoolProduct">${prodOpts}</select></div>
-      <div class="field"><label>Günlük sabit miktar</label><input id="newSchoolQty" type="number" value="10"></div>
+      <div class="field"><label>Günlük sabit miktar</label><input id="newSchoolQty" type="number" value="0"></div>
       <button class="primary" id="addSchoolBtn">Okul ekle</button>
     </div>`;
 }
 function attachTabOkullar(){
-  document.querySelectorAll('[data-defsid]').forEach(inp=>{
-    inp.onchange = ()=>{
-      const s = db.schools.find(s=>s.id===inp.dataset.defsid);
-      s.qty = parseInt(inp.value)||0; saveDB(db);
-    };
-  });
   document.querySelectorAll('[data-prodsid]').forEach(sel=>{
-    sel.value = db.schools.find(s=>s.id===sel.dataset.prodsid).productId;
-    sel.onchange = ()=>{
-      const s = db.schools.find(s=>s.id===sel.dataset.prodsid);
-      s.productId = sel.value; saveDB(db);
-    };
+    const s = db.schools.find(x=>x.id===sel.dataset.prodsid);
+    if(s) sel.value = s.productId;
   });
+  const saveSchoolsBtn = document.getElementById('saveSchoolsBtn');
+  if(saveSchoolsBtn) saveSchoolsBtn.onclick = ()=>{
+    const edits = {};
+    document.querySelectorAll('[data-defsid]').forEach(inp=>{
+      edits[inp.dataset.defsid] = { qty: parseInt(inp.value)||0 };
+    });
+    document.querySelectorAll('[data-prodsid]').forEach(sel=>{
+      const id = sel.dataset.prodsid;
+      if(!edits[id]) edits[id] = {};
+      edits[id].productId = sel.value;
+    });
+    mutate(d=>{
+      d.schools.forEach(s=>{
+        const e = edits[s.id];
+        if(!e) return;
+        if(e.qty !== undefined) s.qty = e.qty;
+        if(e.productId !== undefined) s.productId = e.productId;
+      });
+    });
+    alert('Kaydedildi.');
+  };
+  const zeroSchoolsBtn = document.getElementById('zeroSchoolsBtn');
+  if(zeroSchoolsBtn) zeroSchoolsBtn.onclick = ()=>{
+    if(!confirm('Tüm okulların günlük sabit miktarı 0 yapılacak. Emin misin?')) return;
+    mutate(d=>{ d.schools.forEach(s=>{ s.qty = 0; }); });
+  };
   const firmaSel = document.getElementById('newSchoolFirma');
   if(firmaSel) firmaSel.onchange = ()=>{
     if(firmaSel.value==='__yeni'){
       const name = prompt('Yeni firma adı:');
       if(name && name.trim()){
         const pw = prompt('Firma portal şifresi:','1234') || '1234';
-        db.firmalar[name.trim()] = {password: pw};
-        saveDB(db); render();
+        const fname = name.trim();
+        mutate(d=>{ if(d.firmalar[fname]) return false; d.firmalar[fname] = {password: pw}; });
         setTimeout(()=>{ const s=document.getElementById('newSchoolFirma'); if(s) s.value = name.trim(); }, 0);
       } else { firmaSel.value=''; }
     }
@@ -635,8 +690,8 @@ function attachTabOkullar(){
     if(!name){ alert('Okul adı girin.'); return; }
     if(firma==='__yeni'){ alert('Önce yeni firmayı ekleyin.'); return; }
     const id = 'okul_' + name.toLowerCase().replace(/[^a-z0-9ığüşöç]/gi,'') + '_' + Date.now().toString(36);
-    db.schools.push({id, name, firma: firma || null, qty, productId, portal: firma ? null : '1234'});
-    saveDB(db); render();
+    const rec = {id, name, firma: firma || null, qty, productId, portal: firma ? null : '1234'};
+    mutate(d=>{ if(d.schools.some(s=>s.id===id)) return false; d.schools.push(Object.assign({}, rec)); });
   };
 }
 
@@ -666,8 +721,8 @@ function tabUrunler(){
 function attachTabUrunler(){
   document.querySelectorAll('[data-priceid]').forEach(inp=>{
     inp.onchange = ()=>{
-      const p = db.products.find(p=>p.id===inp.dataset.priceid);
-      p.price = parseFloat(inp.value)||0; saveDB(db);
+      const pid = inp.dataset.priceid; const v = parseFloat(inp.value)||0;
+      mutate(d=>{ const p = d.products.find(x=>x.id===pid); if(!p) return false; p.price = v; });
     };
   });
   document.querySelectorAll('[data-delid]').forEach(btn=>{
@@ -679,8 +734,7 @@ function attachTabUrunler(){
       }
       if(db.products.length<=1){ alert('En az bir ekmek çeşidi kalmalı.'); return; }
       if(!confirm('Bu ekmek çeşidini silmek istediğine emin misin?')) return;
-      db.products = db.products.filter(p=>p.id!==id);
-      saveDB(db); render();
+      mutate(d=>{ d.products = d.products.filter(p=>p.id!==id); });
     };
   });
   const addBtn = document.getElementById('addProdBtn');
@@ -690,8 +744,8 @@ function attachTabUrunler(){
     const name = nameEl.value.trim();
     if(!name){ alert('Ürün adı girin.'); return; }
     const id = 'p_' + name.toLowerCase().replace(/[^a-z0-9ığüşöç]/gi,'') + '_' + Date.now().toString(36);
-    db.products.push({id, name, price: parseFloat(priceEl.value)||0});
-    saveDB(db); render();
+    const rec = {id, name, price: parseFloat(priceEl.value)||0};
+    mutate(d=>{ if(d.products.some(p=>p.id===id)) return false; d.products.push(Object.assign({}, rec)); });
   };
 }
 
@@ -738,7 +792,7 @@ function tabFirmalar(){
       </div>
       ${log.length ? log.map((entry,i)=>`<div class="school-row"><div class="row">
           <div class="school-meta">${entry.date} — ${tl(entry.amount)}${entry.note?' · '+entry.note:''}</div>
-          <button class="iconbtn" style="color:var(--danger);" data-delpay="${f}" data-payidx="${i}">✕</button>
+          <button class="iconbtn" style="color:var(--danger);" data-delpay="${f}" data-payid="${entry.id||''}">✕</button>
         </div></div>`).join('') : `<div class="school-meta">Henüz ödeme girilmemiş.</div>`}
     </div></div>`;
   });
@@ -758,7 +812,7 @@ function tabFirmalar(){
       </div>
       ${log.length ? log.map((entry,i)=>`<div class="school-row"><div class="row">
           <div class="school-meta">${entry.date} — ${tl(entry.amount)}${entry.note?' · '+entry.note:''}</div>
-          <button class="iconbtn" style="color:var(--danger);" data-delpay="${s.id}" data-payidx="${i}">✕</button>
+          <button class="iconbtn" style="color:var(--danger);" data-delpay="${s.id}" data-payid="${entry.id||''}">✕</button>
         </div></div>`).join('') : `<div class="school-meta">Henüz ödeme girilmemiş.</div>`}
     </div>`;
   });
@@ -779,8 +833,7 @@ function attachTabFirmalar(){
   document.querySelectorAll('[data-delpay]').forEach(btn=>{
     btn.onclick = ()=>{
       if(!confirm('Bu ödeme kaydını silmek istediğine emin misin?')) return;
-      removePayment(btn.dataset.delpay, parseInt(btn.dataset.payidx));
-      render();
+      removePayment(btn.dataset.delpay, btn.dataset.payid);
     };
   });
 }
@@ -929,12 +982,12 @@ function tabAyarlar(){
   }
   return `
   <div class="card">
-    <div class="settings-row"><div>Karanlık mod</div><div class="toggle ${db.dark?'on':''}" id="darkToggle"></div></div>
+    <div class="settings-row"><div>Karanlık mod</div><div class="toggle ${prefs.dark?'on':''}" id="darkToggle"></div></div>
     <div class="settings-row"><div>Yazı boyutu</div>
       <div class="fs-group">
-        <button data-fs="small" class="${db.fontSize==='small'?'active':''}">A</button>
-        <button data-fs="medium" class="${db.fontSize==='medium'?'active':''}">A</button>
-        <button data-fs="large" class="${db.fontSize==='large'?'active':''}">A</button>
+        <button data-fs="small" class="${prefs.fontSize==='small'?'active':''}">A</button>
+        <button data-fs="medium" class="${prefs.fontSize==='medium'?'active':''}">A</button>
+        <button data-fs="large" class="${prefs.fontSize==='large'?'active':''}">A</button>
       </div>
     </div>
   </div>
@@ -942,17 +995,16 @@ function tabAyarlar(){
 }
 function attachTabAyarlar(){
   const dt = document.getElementById('darkToggle');
-  if(dt) dt.onclick = ()=>{ db.dark=!db.dark; saveDB(db); render(); };
+  if(dt) dt.onclick = ()=>{ prefs.dark=!prefs.dark; savePrefs(prefs); render(); };
   document.querySelectorAll('[data-fs]').forEach(b=>{
-    b.onclick = ()=>{ db.fontSize=b.dataset.fs; saveDB(db); render(); };
+    b.onclick = ()=>{ prefs.fontSize=b.dataset.fs; savePrefs(prefs); render(); };
   });
   const saveTgBtn = document.getElementById('saveTgBtn');
   if(saveTgBtn) saveTgBtn.onclick = ()=>{
     const token = document.getElementById('tgTokenInp').value.trim();
     const chatId = document.getElementById('tgChatInp').value.trim();
-    db.telegram = { token, chatId }; saveDB(db);
+    mutate(d=>{ d.telegram = { token, chatId }; });
     alert('Telegram ayarları kaydedildi.');
-    render();
   };
   const findChatIdBtn = document.getElementById('findChatIdBtn');
   if(findChatIdBtn) findChatIdBtn.onclick = async ()=>{
@@ -984,9 +1036,9 @@ function attachTabAyarlar(){
           resultEl.querySelectorAll('[data-pickchatid]').forEach(btn=>{
             btn.onclick = ()=>{
               document.getElementById('tgChatInp').value = btn.dataset.pickchatid;
-              db.telegram = { token, chatId: btn.dataset.pickchatid }; saveDB(db);
-              alert('Chat ID kaydedildi: ' + btn.dataset.pickchatid);
-              render();
+              const cid = btn.dataset.pickchatid;
+              mutate(d=>{ d.telegram = { token, chatId: cid }; });
+              alert('Chat ID kaydedildi: ' + cid);
             };
           });
         }
@@ -1000,9 +1052,8 @@ function attachTabAyarlar(){
   if(saveAdminPwBtn) saveAdminPwBtn.onclick = ()=>{
     const val = document.getElementById('newAdminPw').value.trim();
     if(!val){ alert('Yeni şifre girin.'); return; }
-    db.adminPassword = val; saveDB(db);
+    mutate(d=>{ d.adminPassword = val; });
     alert('Yönetici şifresi güncellendi.');
-    render();
   };
   document.querySelectorAll('[data-savefirmapw]').forEach(btn=>{
     btn.onclick = ()=>{
@@ -1010,9 +1061,8 @@ function attachTabAyarlar(){
       const inp = document.querySelector(`[data-firmapw="${f}"]`);
       const val = inp.value.trim();
       if(!val){ alert('Yeni şifre girin.'); return; }
-      db.firmalar[f].password = val; saveDB(db);
+      mutate(d=>{ if(!d.firmalar[f]) return false; d.firmalar[f].password = val; });
       alert(f+' şifresi güncellendi.');
-      render();
     };
   });
   document.querySelectorAll('[data-saveschoolpw]').forEach(btn=>{
@@ -1021,25 +1071,26 @@ function attachTabAyarlar(){
       const inp = document.querySelector(`[data-schoolpw="${id}"]`);
       const val = inp.value.trim();
       if(!val){ alert('Yeni şifre girin.'); return; }
-      const s = db.schools.find(s=>s.id===id);
-      s.portal = val; saveDB(db);
+      const s = db.schools.find(x=>x.id===id);
+      mutate(d=>{ const t = d.schools.find(x=>x.id===id); if(!t) return false; t.portal = val; });
       alert(s.name+' şifresi güncellendi.');
-      render();
     };
   });
   document.querySelectorAll('[data-permuser]').forEach(cb=>{
     cb.onchange = ()=>{
-      const p = db.personel.find(p=>p.username===cb.dataset.permuser);
-      if(!p.perms) p.perms = {};
-      p.perms[cb.dataset.permkey] = cb.checked;
-      saveDB(db);
+      const uname = cb.dataset.permuser, key = cb.dataset.permkey, on = cb.checked;
+      mutate(d=>{
+        const p = d.personel.find(x=>x.username===uname); if(!p) return false;
+        if(!p.perms) p.perms = {};
+        p.perms[key] = on;
+      });
     };
   });
   document.querySelectorAll('[data-delpers]').forEach(btn=>{
     btn.onclick = ()=>{
       if(db.personel.length<=1){ alert('En az bir personel kalmalı.'); return; }
-      db.personel = db.personel.filter(p=>p.username!==btn.dataset.delpers);
-      saveDB(db); render();
+      const uname = btn.dataset.delpers;
+      mutate(d=>{ d.personel = d.personel.filter(p=>p.username!==uname); });
     };
   });
   const addPersBtn = document.getElementById('addPersBtn');
@@ -1049,8 +1100,8 @@ function attachTabAyarlar(){
     const pw = document.getElementById('newPersPw').value.trim();
     if(!name || !uname || !pw){ alert('Tüm alanları doldurun.'); return; }
     if(db.personel.some(p=>p.username===uname)){ alert('Bu kullanıcı adı zaten var.'); return; }
-    db.personel.push({username:uname, password:pw, name, perms:{}});
-    saveDB(db); render();
+    const rec = {username:uname, password:pw, name, perms:{}};
+    mutate(d=>{ if(d.personel.some(p=>p.username===uname)) return false; d.personel.push(Object.assign({}, rec)); });
   };
 }
 

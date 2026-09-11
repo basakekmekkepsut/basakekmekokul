@@ -278,8 +278,24 @@ function setOrderQty(dateStr, schoolId, qty){
   db.orders[dateStr][schoolId] = qty;
   saveDB(db);
 }
+function persistOnly(){
+  try{ localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(db)); }catch(e){}
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{
+    setDoc(STATE_DOC, { json: JSON.stringify(db) }).catch(e=>console.error('Firestore save failed', e));
+  }, 250);
+}
+function ensureOrderDate(dateStr){
+  // when a date is first opened for entry, lock in every school's default qty
+  // so ekstre/statement totals reflect what was actually confirmed, not guesses
+  if(db.orders[dateStr]) return;
+  const entry = {};
+  db.schools.forEach(s=>{ entry[s.id] = s.qty; });
+  db.orders[dateStr] = entry;
+  persistOnly();
+}
 function monthTotal(schoolId){
-  // sum all order entries this calendar month for this school (demo: sums all entries present)
+  // sum actual order entries this calendar month for this school (no fake/demo extrapolation)
   let total = 0;
   const now = new Date(); const ym = now.toISOString().slice(0,7);
   for(const date in db.orders){
@@ -287,9 +303,7 @@ function monthTotal(schoolId){
       total += db.orders[date][schoolId];
     }
   }
-  const school = db.schools.find(s=>s.id===schoolId);
-  // fill days without explicit entry using default qty, minus today count roughly (demo simplification)
-  return total || (school ? school.qty * 20 : 0); // fallback demo estimate
+  return total;
 }
 function paid(schoolKey){
   const log = db.payments[schoolKey] || [];
@@ -514,6 +528,7 @@ function tabUretim(){
 let siparisDate = tomorrowStr();
 function tabSiparis(){
   const date = siparisDate;
+  ensureOrderDate(date);
   const groups = {};
   db.schools.forEach(s=>{ const k = s.firma || '__direct'; (groups[k]=groups[k]||[]).push(s); });
   let html = `<div class="card" style="text-align:center;">

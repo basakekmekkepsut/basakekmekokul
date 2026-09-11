@@ -187,9 +187,11 @@ function defaultDB(){
       {id:'cpl', name:'ÇPL', firma:null, qty:12, productId:'ekmek', portal:'1234'},
     ],
     firmalar: { 'YENİÇERİ': { password: '1234' } },
+    adminPassword: 'admin123',
+    telegram: { token: '', chatId: '' },
     personel: [
-      {username:'usta1', password:'1234', name:'Usta 1'},
-      {username:'usta2', password:'1234', name:'Usta 2'},
+      {username:'usta1', password:'1234', name:'Usta 1', perms:{}},
+      {username:'usta2', password:'1234', name:'Usta 2', perms:{}},
     ],
     orders: {},
     payments: {},
@@ -205,6 +207,10 @@ function migrate(raw){
     if(!s.productId){ s.productId = s.product === 'Roll Ekmek' ? 'roll' : 'ekmek'; }
     delete s.product;
     return s;
+  });
+  merged.personel = (merged.personel || []).map(p=>{
+    if(!p.perms) p.perms = {};
+    return p;
   });
   return merged;
 }
@@ -317,7 +323,6 @@ function render(){
   }
   applyPrefs();
   if(!session){ root.innerHTML = loginScreen(); attachLogin(); return; }
-  if(session.role==='personel'){ root.innerHTML = personelScreen(); attachPersonel(); return; }
   root.innerHTML = appShell();
   attachShell();
 }
@@ -340,7 +345,7 @@ function loginScreen(){
       </div>
       <div id="extraFields"></div>
       <button class="primary" id="loginBtn" style="margin-top:6px;">Giriş yap</button>
-      <div class="linkbox">Demo şifreleri — Personel: <b>usta1 / 1234</b> · Admin: <b>admin123</b> · Firma (YENİÇERİ): <b>1234</b> · Okul portalları: <b>1234</b></div>
+      <div class="linkbox">İlk kurulum şifreleri — Admin: <b>admin123</b> · Firma/okul portalları: <b>1234</b>. Giriş yaptıktan sonra Ayarlar'dan değiştir.</div>
     </div>
   </div>`;
 }
@@ -371,9 +376,9 @@ function attachLogin(){
     if(v==='personel'){
       const uname = (document.getElementById('uname').value||'').trim();
       const p = db.personel.find(x=>x.username===uname);
-      if(p && p.password===pw){ session={role:'personel', key:uname}; render(); } else alert('Kullanıcı adı veya şifre hatalı');
+      if(p && p.password===pw){ session={role:'personel', key:uname, tab:'uretim'}; render(); } else alert('Kullanıcı adı veya şifre hatalı');
     } else if(v==='admin'){
-      if(pw==='admin123'){ session={role:'admin', tab:'siparis'}; render(); } else alert('Şifre hatalı');
+      if(pw===db.adminPassword){ session={role:'admin', tab:'siparis'}; render(); } else alert('Şifre hatalı');
     } else if(v==='firma'){
       if(pw===db.firmalar['YENİÇERİ'].password){ session={role:'firma', key:'YENİÇERİ', tab:'ekstre'}; render(); } else alert('Şifre hatalı');
     } else if(v==='school'){
@@ -419,6 +424,7 @@ const ICONS = {
   urunler: '<path d="M4 12c0-4 3.5-8 8-8s8 4 8 8-3 6-8 6-8-2-8-6Z"/><path d="M7 12c1-1 2-1 3 0s2 1 3 0 2-1 3 0"/>',
   ekstre: '<path d="M6 3h12v18l-2.5-1.5L13 21l-2-1.5L9 21l-2.5-1.5L4.5 21V5"/><path d="M8 8h8M8 12h8M8 16h5" transform="translate(-2,0)"/>',
   mesaj: '<path d="M4 5h16v11H8l-4 4V5Z"/><path d="M8 9h8M8 12h5"/>',
+  uretim: '<path d="M4 3v18M4 3l12 6-12 6"/><path d="M16 3v18"/>',
   ayarlar: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9h0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>'
 };
 function icon(name){ return `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`; }
@@ -426,10 +432,23 @@ function icon(name){ return `<svg class="ic" viewBox="0 0 24 24" fill="none" str
 // ---------- APP SHELL (admin / firma / school) ----------
 function appShell(){
   const role = session.role;
-  const tabs = role==='admin'
-    ? [['siparis','siparis','Sipariş'],['okullar','okullar','Okullar'],['urunler','urunler','Ürünler'],['ekstre','ekstre','Ekstre'],['mesaj','mesaj','Mesaj'],['ayarlar','ayarlar','Ayarlar']]
-    : [['ekstre','ekstre','Ekstre'],['ayarlar','ayarlar','Ayarlar']];
-  const label = role==='admin' ? 'Yönetici' : role==='firma' ? 'YENİÇERİ Portalı' : db.schools.find(s=>s.id===session.key).name+' Portalı';
+  let tabs;
+  if(role==='admin'){
+    tabs = [['siparis','siparis','Sipariş'],['okullar','okullar','Okullar'],['urunler','urunler','Ürünler'],['ekstre','ekstre','Ekstre'],['mesaj','mesaj','Mesaj'],['ayarlar','ayarlar','Ayarlar']];
+  } else if(role==='personel'){
+    const p = db.personel.find(x=>x.username===session.key);
+    const perms = (p && p.perms) || {};
+    tabs = [['uretim','uretim','Üretim']];
+    if(perms.siparis) tabs.push(['siparis','siparis','Sipariş']);
+    if(perms.okullar) tabs.push(['okullar','okullar','Okullar']);
+    if(perms.urunler) tabs.push(['urunler','urunler','Ürünler']);
+    if(perms.ekstre) tabs.push(['ekstre','ekstre','Ekstre']);
+    if(perms.mesaj) tabs.push(['mesaj','mesaj','Mesaj']);
+    tabs.push(['ayarlar','ayarlar','Ayarlar']);
+  } else {
+    tabs = [['ekstre','ekstre','Ekstre'],['ayarlar','ayarlar','Ayarlar']];
+  }
+  const label = role==='admin' ? 'Yönetici' : role==='personel' ? (db.personel.find(x=>x.username===session.key)||{}).name || 'Personel' : role==='firma' ? session.key+' Portalı' : db.schools.find(s=>s.id===session.key).name+' Portalı';
   return `
   <div class="app">
     <header class="top">
@@ -458,6 +477,14 @@ function renderTab(){
     else if(session.tab==='ekstre') el.innerHTML = tabEkstreAdmin();
     else if(session.tab==='mesaj') el.innerHTML = tabMesaj();
     else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
+  } else if(session.role==='personel'){
+    if(session.tab==='uretim') el.innerHTML = tabUretim();
+    else if(session.tab==='siparis') el.innerHTML = tabSiparis();
+    else if(session.tab==='okullar') el.innerHTML = tabOkullar();
+    else if(session.tab==='urunler') el.innerHTML = tabUrunler();
+    else if(session.tab==='ekstre') el.innerHTML = tabEkstreAdmin();
+    else if(session.tab==='mesaj') el.innerHTML = tabMesaj();
+    else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
   } else if(session.role==='firma'){
     if(session.tab==='ekstre') el.innerHTML = tabEkstreFirma();
     else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
@@ -466,6 +493,21 @@ function renderTab(){
     else if(session.tab==='ayarlar') el.innerHTML = tabAyarlar();
   }
   attachTab();
+}
+
+// ---- Üretim (personel: read-only tomorrow's production, was the standalone screen) ----
+function tabUretim(){
+  const date = tomorrowStr();
+  const rows = db.schools.map(s=>{
+    const q = getOrderQty(date, s);
+    return `<div class="school-row"><div class="row">
+      <div><div class="school-name">${s.name}</div><div class="school-meta">${product(s).name}${s.firma?` · ${s.firma}`:' · Direkt'}</div></div>
+      <div style="font-family:'Bitter',serif;font-weight:700;font-size:1.05rem;">${q}</div>
+    </div></div>`;
+  }).join('');
+  const total = db.schools.reduce((a,s)=>a+getOrderQty(date,s),0);
+  return `<div class="totalbar"><div>Yarının toplam ekmeği — ${fmtDate(date)}</div><div class="num">${total}</div></div>
+    <div class="card">${rows}</div>`;
 }
 
 // ---- Sipariş (admin: enter tomorrow's order) ----
@@ -671,14 +713,16 @@ function tabMesaj(){
   const totalMoney = db.schools.reduce((a,s)=>a+getOrderQty(date,s)*product(s).price,0);
   const text = `Okul Ekmek Siparişi — ${fmtDate(date)}\n` + db.schools.map(s=>`${s.name}: ${getOrderQty(date,s)} adet (${product(s).name})`).join('\n') + `\nToplam: ${total} adet — ${tl(totalMoney)}`;
   const waLink = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const tgReady = db.telegram && db.telegram.token && db.telegram.chatId;
   return `
   <div class="card">
     <h2 style="font-size:1rem;margin-bottom:8px;">Yarının sipariş özeti</h2>
     <div class="school-meta" style="white-space:pre-line;line-height:1.6;">${text}</div>
   </div>
   <div class="card" style="display:flex;flex-direction:column;gap:10px;">
-    <a class="msg-btn wa" href="${waLink}" target="_blank">📲 WhatsApp'ta paylaş</a>
-    <button class="msg-btn tg" id="tgBtn">✈️ Telegram'a gönder (bot kurulunca otomatik)</button>
+    <a class="msg-btn wa" href="${waLink}" target="_blank">📲 WhatsApp'tan gönder</a>
+    <button class="msg-btn tg" id="tgBtn" ${tgReady?'':'disabled style="opacity:.5;"'}>✈️ Telegram'a gönder</button>
+    ${tgReady ? '' : `<div class="school-meta">Telegram göndermek için Ayarlar sekmesinden bot token ve chat ID gir.</div>`}
   </div>
   <div class="card">
     <div class="school-meta">Ustalar "Personel" girişiyle kullanıcı adı/şifresiyle giriş yapıp yarının üretim listesini görebilir. Personel eklemek/silmek için Ayarlar sekmesine bak.</div>
@@ -686,19 +730,84 @@ function tabMesaj(){
 }
 function attachTabMesaj(){
   const tg = document.getElementById('tgBtn');
-  if(tg) tg.onclick = ()=> alert('Demo: Telegram bot bağlanınca bu buton mesajı doğrudan gruba gönderecek.');
+  if(tg) tg.onclick = async ()=>{
+    if(!db.telegram || !db.telegram.token || !db.telegram.chatId) return;
+    const date = tomorrowStr();
+    const total = db.schools.reduce((a,s)=>a+getOrderQty(date,s),0);
+    const totalMoney = db.schools.reduce((a,s)=>a+getOrderQty(date,s)*product(s).price,0);
+    const text = `Okul Ekmek Siparişi — ${fmtDate(date)}\n` + db.schools.map(s=>`${s.name}: ${getOrderQty(date,s)} adet (${product(s).name})`).join('\n') + `\nToplam: ${total} adet — ${tl(totalMoney)}`;
+    tg.disabled = true; tg.textContent = 'Gönderiliyor...';
+    try{
+      const url = `https://api.telegram.org/bot${db.telegram.token}/sendMessage?chat_id=${encodeURIComponent(db.telegram.chatId)}&text=${encodeURIComponent(text)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if(data.ok){ alert('Telegram\'a gönderildi.'); }
+      else { alert('Gönderilemedi: ' + (data.description || 'bilinmeyen hata')); }
+    }catch(e){
+      alert('Gönderilemedi: bağlantı hatası. Bot token/chat ID doğru mu kontrol et.');
+    }
+    tg.disabled = false; tg.textContent = "✈️ Telegram'a gönder";
+  };
 }
 
 // ---- Ayarlar ----
 function tabAyarlar(){
-  let personelHtml = '';
+  let adminHtml = '';
   if(session.role==='admin'){
-    personelHtml = `<div class="card">
-      <div class="school-meta" style="margin-bottom:8px;">Personel / usta hesapları</div>
-      ${db.personel.map(p=>`<div class="school-row"><div class="row">
-        <div><div class="school-name">${p.name}</div><div class="school-meta">${p.username} · ${p.password}</div></div>
-        <button class="iconbtn" style="color:var(--danger);" data-delpers="${p.username}">✕</button>
+    const permDefs = [['siparis','Sipariş'],['okullar','Okullar'],['urunler','Ürünler'],['ekstre','Ekstre'],['mesaj','Mesaj']];
+    adminHtml = `
+    <div class="card">
+      <div class="school-meta" style="margin-bottom:8px;">Telegram bot bağlantısı</div>
+      <div class="field"><label>Bot token</label><input id="tgTokenInp" placeholder="123456:ABC-DEF..." value="${(db.telegram&&db.telegram.token)||''}"></div>
+      <div class="field"><label>Chat ID</label><input id="tgChatInp" placeholder="-1001234567890" value="${(db.telegram&&db.telegram.chatId)||''}"></div>
+      <div style="display:flex; gap:8px;">
+        <button class="ghost" id="saveTgBtn">Kaydet</button>
+        <button class="ghost" id="findChatIdBtn">Chat ID'yi otomatik bul</button>
+      </div>
+      <div id="chatIdResult"></div>
+      <div class="school-meta" style="margin-top:8px;">Token'ı BotFather'dan al, önce yukarı gir ve Kaydet'e bas. Sonra botu gruba ekle, grupta bir mesaj yaz, "Chat ID'yi otomatik bul"a bas.</div>
+    </div>
+    <div class="card">
+      <div class="school-meta" style="margin-bottom:8px;">Yönetici şifresi</div>
+      <div style="display:flex; gap:8px;">
+        <input id="newAdminPw" type="password" placeholder="Yeni şifre" style="margin-top:0;">
+        <button class="ghost" id="saveAdminPwBtn">Kaydet</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="school-meta" style="margin-bottom:8px;">Firma portal şifreleri</div>
+      ${Object.keys(db.firmalar).map(f=>`<div class="school-row"><div class="row">
+        <div class="school-name">${f}</div>
+        <div style="display:flex; gap:6px;">
+          <input class="mini-select" style="max-width:110px;" type="password" placeholder="Yeni şifre" data-firmapw="${f}">
+          <button class="ghost" data-savefirmapw="${f}">Kaydet</button>
+        </div>
       </div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="school-meta" style="margin-bottom:8px;">Okul portal şifreleri</div>
+      ${db.schools.filter(s=>s.portal!==null).map(s=>`<div class="school-row"><div class="row">
+        <div class="school-name">${s.name}</div>
+        <div style="display:flex; gap:6px;">
+          <input class="mini-select" style="max-width:110px;" type="password" placeholder="Yeni şifre" data-schoolpw="${s.id}">
+          <button class="ghost" data-saveschoolpw="${s.id}">Kaydet</button>
+        </div>
+      </div></div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="school-meta" style="margin-bottom:10px;">Personel / usta hesapları ve yetkileri</div>
+      ${db.personel.map(p=>`
+        <div class="school-row">
+          <div class="row">
+            <div><div class="school-name">${p.name}</div><div class="school-meta">${p.username} · ${p.password}</div></div>
+            <button class="iconbtn" style="color:var(--danger);" data-delpers="${p.username}">✕</button>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:8px;">
+            ${permDefs.map(([id,lb])=>`<label style="display:flex; align-items:center; gap:5px; font-size:.78rem; color:var(--ink-soft);">
+              <input type="checkbox" data-permuser="${p.username}" data-permkey="${id}" ${p.perms && p.perms[id] ? 'checked':''}> ${lb}
+            </label>`).join('')}
+          </div>
+        </div>`).join('')}
       <div style="display:flex; gap:8px; margin-top:10px;">
         <input id="newPersName" placeholder="Ad" style="margin-top:0;">
         <input id="newPersUser" placeholder="Kullanıcı adı" style="margin-top:0;">
@@ -718,14 +827,102 @@ function tabAyarlar(){
       </div>
     </div>
   </div>
-  ${personelHtml}
-  <div class="card"><div class="school-meta">Bu demo sürümdür — veriler bu cihazda saklanır. Canlı sürümde Firebase ile tüm cihazlarda senkron olacak.</div></div>`;
+  ${adminHtml}`;
 }
 function attachTabAyarlar(){
   const dt = document.getElementById('darkToggle');
   if(dt) dt.onclick = ()=>{ db.dark=!db.dark; saveDB(db); render(); };
   document.querySelectorAll('[data-fs]').forEach(b=>{
     b.onclick = ()=>{ db.fontSize=b.dataset.fs; saveDB(db); render(); };
+  });
+  const saveTgBtn = document.getElementById('saveTgBtn');
+  if(saveTgBtn) saveTgBtn.onclick = ()=>{
+    const token = document.getElementById('tgTokenInp').value.trim();
+    const chatId = document.getElementById('tgChatInp').value.trim();
+    db.telegram = { token, chatId }; saveDB(db);
+    alert('Telegram ayarları kaydedildi.');
+    render();
+  };
+  const findChatIdBtn = document.getElementById('findChatIdBtn');
+  if(findChatIdBtn) findChatIdBtn.onclick = async ()=>{
+    const token = document.getElementById('tgTokenInp').value.trim();
+    const resultEl = document.getElementById('chatIdResult');
+    if(!token){ alert('Önce bot token gir ve Kaydet\'e bas.'); return; }
+    findChatIdBtn.disabled = true; findChatIdBtn.textContent = 'Aranıyor...';
+    resultEl.innerHTML = '';
+    try{
+      const res = await fetch(`https://api.telegram.org/bot${token}/getUpdates`);
+      const data = await res.json();
+      if(!data.ok){
+        resultEl.innerHTML = `<div class="school-meta" style="color:var(--danger);margin-top:8px;">Hata: ${data.description||'token hatalı olabilir'}</div>`;
+      } else if(!data.result || data.result.length===0){
+        resultEl.innerHTML = `<div class="school-meta" style="color:var(--danger);margin-top:8px;">Henüz mesaj bulunamadı. Botu gruba ekleyip grupta bir mesaj yaz, sonra tekrar dene.</div>`;
+      } else {
+        const seen = {};
+        data.result.forEach(u=>{
+          const chat = (u.message && u.message.chat) || (u.channel_post && u.channel_post.chat);
+          if(chat) seen[chat.id] = chat.title || chat.username || chat.first_name || 'Sohbet';
+        });
+        const ids = Object.keys(seen);
+        if(ids.length===0){
+          resultEl.innerHTML = `<div class="school-meta" style="color:var(--danger);margin-top:8px;">Sohbet bulunamadı, tekrar dene.</div>`;
+        } else {
+          resultEl.innerHTML = `<div style="margin-top:8px;">` + ids.map(id=>
+            `<button class="ghost" data-pickchatid="${id}" style="margin:2px 4px 2px 0;">${seen[id]} (${id})</button>`
+          ).join('') + `</div>`;
+          resultEl.querySelectorAll('[data-pickchatid]').forEach(btn=>{
+            btn.onclick = ()=>{
+              document.getElementById('tgChatInp').value = btn.dataset.pickchatid;
+              db.telegram = { token, chatId: btn.dataset.pickchatid }; saveDB(db);
+              alert('Chat ID kaydedildi: ' + btn.dataset.pickchatid);
+              render();
+            };
+          });
+        }
+      }
+    }catch(e){
+      resultEl.innerHTML = `<div class="school-meta" style="color:var(--danger);margin-top:8px;">Bağlantı hatası, tekrar dene.</div>`;
+    }
+    findChatIdBtn.disabled = false; findChatIdBtn.textContent = "Chat ID'yi otomatik bul";
+  };
+  const saveAdminPwBtn = document.getElementById('saveAdminPwBtn');
+  if(saveAdminPwBtn) saveAdminPwBtn.onclick = ()=>{
+    const val = document.getElementById('newAdminPw').value.trim();
+    if(!val){ alert('Yeni şifre girin.'); return; }
+    db.adminPassword = val; saveDB(db);
+    alert('Yönetici şifresi güncellendi.');
+    render();
+  };
+  document.querySelectorAll('[data-savefirmapw]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const f = btn.dataset.savefirmapw;
+      const inp = document.querySelector(`[data-firmapw="${f}"]`);
+      const val = inp.value.trim();
+      if(!val){ alert('Yeni şifre girin.'); return; }
+      db.firmalar[f].password = val; saveDB(db);
+      alert(f+' şifresi güncellendi.');
+      render();
+    };
+  });
+  document.querySelectorAll('[data-saveschoolpw]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.dataset.saveschoolpw;
+      const inp = document.querySelector(`[data-schoolpw="${id}"]`);
+      const val = inp.value.trim();
+      if(!val){ alert('Yeni şifre girin.'); return; }
+      const s = db.schools.find(s=>s.id===id);
+      s.portal = val; saveDB(db);
+      alert(s.name+' şifresi güncellendi.');
+      render();
+    };
+  });
+  document.querySelectorAll('[data-permuser]').forEach(cb=>{
+    cb.onchange = ()=>{
+      const p = db.personel.find(p=>p.username===cb.dataset.permuser);
+      if(!p.perms) p.perms = {};
+      p.perms[cb.dataset.permkey] = cb.checked;
+      saveDB(db);
+    };
   });
   document.querySelectorAll('[data-delpers]').forEach(btn=>{
     btn.onclick = ()=>{
@@ -741,7 +938,7 @@ function attachTabAyarlar(){
     const pw = document.getElementById('newPersPw').value.trim();
     if(!name || !uname || !pw){ alert('Tüm alanları doldurun.'); return; }
     if(db.personel.some(p=>p.username===uname)){ alert('Bu kullanıcı adı zaten var.'); return; }
-    db.personel.push({username:uname, password:pw, name});
+    db.personel.push({username:uname, password:pw, name, perms:{}});
     saveDB(db); render();
   };
 }

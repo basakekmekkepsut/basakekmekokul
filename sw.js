@@ -2,7 +2,7 @@
 // Uygulama dosyaları önbelleğe alınır (çevrimdışı açılsın diye),
 // ama Firebase/Telegram istekleri ASLA önbellekten verilmez - veri hep canlıdır.
 
-const CACHE = 'okul-ekmek-v3-5';
+const CACHE = 'okul-ekmek-v3-6';
 const SHELL = [
   './',
   './index.html',

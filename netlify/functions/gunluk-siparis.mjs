@@ -41,26 +41,35 @@ function tl(n) {
 
 function buildMessage(db) {
   const date = tomorrowStr();
-  const productOf = (s) => db.products.find((p) => p.id === s.productId) || db.products[0];
-  const qtyOf = (s) => {
+  const dow = new Date(date + "T00:00:00").getDay();
+  const productOf = (ln) => db.products.find((p) => p.id === ln.productId) || db.products[0];
+  const qtyOf = (ln) => {
     const o = db.orders[date];
-    if (o && o[s.id] !== undefined) return o[s.id];
-    return s.qty;
+    if (o && o[ln.id] !== undefined) return o[ln.id];
+    if (ln.active === false) return 0;
+    const days = Array.isArray(ln.days) ? ln.days
+      : (Array.isArray(db.deliveryDays) ? db.deliveryDays : [1, 2, 3, 4, 5]);
+    return days.includes(dow) ? ln.qty : 0;
   };
 
   const byProduct = {};
+  const schoolLines = [];
   db.schools.forEach((s) => {
-    const p = productOf(s);
-    const q = qtyOf(s);
-    if (!byProduct[p.id]) byProduct[p.id] = { name: p.name, qty: 0, money: 0 };
-    byProduct[p.id].qty += q;
-    byProduct[p.id].money += q * p.price;
+    (s.lines || []).forEach((ln) => {
+      const q = qtyOf(ln);
+      if (!q) return;
+      const p = productOf(ln);
+      schoolLines.push(`${s.name}: ${q} adet (${p.name})`);
+      if (!byProduct[p.id]) byProduct[p.id] = { name: p.name, qty: 0, money: 0 };
+      byProduct[p.id].qty += q;
+      byProduct[p.id].money += q * p.price;
+    });
   });
 
-  const schoolLines = db.schools.map((s) => `${s.name}: ${qtyOf(s)} adet (${productOf(s).name})`).join("\n");
-  const productLines = Object.values(byProduct).map((p) => `${p.name}: ${p.qty} adet — ${tl(p.money)}`).join("\n");
+  if (!schoolLines.length) return `Ekmek Siparişi — ${fmtDate(date)}\n\nYarın için sipariş yok.`;
 
-  return `Okul Ekmek Siparişi — ${fmtDate(date)}\n\n${schoolLines}\n\nÜrün bazında toplam:\n${productLines}`;
+  const productLines = Object.values(byProduct).map((p) => `${p.name}: ${p.qty} adet`).join("\n");
+  return `Ekmek Siparişi — ${fmtDate(date)}\n\n${schoolLines.join("\n")}\n\nÜrün bazında toplam:\n${productLines}`;
 }
 
 export default async () => {
